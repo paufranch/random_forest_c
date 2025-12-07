@@ -4,39 +4,8 @@
 #include <fcntl.h>
 #include <math.h>
 #include <string.h>
-
-#define MAX_DEPTH 10
-#define MIN_SAMPLES 2
-
-typedef struct
-{
-    int leaf;
-    int featureId;
-    double threshold;
-    double value;
-    struct Node* left;
-    struct Node* right;
-} Node;
-
-typedef struct
-{
-    Node* root;
-} DecisionTree;
-
-typedef struct
-{
-    double** vars;
-    int* target_var;
-    int n_samples;
-    int n_features;
-} Dataset;
-
-typedef struct {
-    DecisionTree* trees;
-    int numTrees;
-    int maxDepth;
-    int numFeatures;
-} RandomForest;
+#include "random_forest.h"
+#include "metrics.h"
 
 double gini_impurity(int* labels, int n)
 {
@@ -126,11 +95,6 @@ double* best_threshold, double* best_gain)
 
 Node* BuildTree(Dataset *data, int *sampleIndices, int n_samples, int depth, int max_depth)
 {
-    // double percent = (double)depth/(double)max_depth;
-    // char buff[64];
-    // sprintf(buff, "%f,", percent);
-    // write(0, buff, strlen(buff));
-
     int count_0 = 0;
     for (int i = 0; i < n_samples; i++) {
         if (data->target_var[sampleIndices[i]] == 0) count_0++;
@@ -362,24 +326,59 @@ void FreeCSVDataset(Dataset* data)
     free(data->target_var);
 }
 
+void SafeWrite(int fd, const void *buf, size_t n_bytes)
+{
+    if(write(fd, buf, n_bytes) < 0)
+    {
+        perror("Error saving tree, aborting to avoid corrupted data.\n");
+        close(fd);
+        unlink("model.rfc");
+        exit(1);
+    }
+}
+
+void SaveTree(Node* node, int fd)
+{   
+    if(!node) return;
+
+    int featureid = (node->leaf) ? -1 : node->featureId;
+    double threshold = (node->leaf) ? node->value : node->threshold;
+    SafeWrite(fd, &featureid, sizeof(featureid));
+    SafeWrite(fd, &threshold, sizeof(threshold));
+
+    if(!node->leaf)
+    {
+        SaveTree(node->left, fd);
+        SaveTree(node->right, fd);
+    }
+}
+
+void SaveForest(RandomForest* rf, int fd)
+{
+    SafeWrite(fd, &rf->numTrees, sizeof(rf->numTrees));
+    SafeWrite(fd, &rf->numFeatures, sizeof(rf->numFeatures));
+    SafeWrite(fd, &rf->maxDepth, sizeof(rf->maxDepth));
+
+    for(int i = 0; i < rf->numTrees; i++)
+    {
+        SaveTree(rf->trees[i].root, fd);
+    }
+
+    char buff[64];
+    sprintf(buff, "Forest saved successfully!\n");
+    write(0, buff, strlen(buff));
+}
+
 int main()
 {
-    //TODO: make a csv reader and build dataset
-    Dataset* data = malloc(sizeof(Dataset));
-
     int fd = open("bankdataset.csv", O_RDONLY);
     if(fd == -1)
     {
         perror("Error opening dataset file.");
-        free(data);
         exit(1);
     }
 
-    //TODO: do stuff with the tree :)
-    // COULD THE TREE BE SAVED INTO A FILE BY REDIRECTING A WRITE SYSCALL? WHAT IS THE FILE DESCRIPTOR?
-    //write(0, tree, sizeof(DecisionTree));
-    //int writefile = open("model.rfc", O_RDWR | O_CREAT, S_IRUSR);
-
+    Dataset* data = malloc(sizeof(Dataset));
     ReadCSV(data, fd);
 
     int numTrees = 10;
@@ -389,9 +388,12 @@ int main()
     // int train_size = (int)(data->n_samples * 0.8);
     // int test_size = data->n_samples - train_size;
     TrainForest(rf, data);
+    Metrics m = EvaluateModel(rf, data);
+    PrintMetrics(m);
 
     // Store tree into file
-    //write(writefile, rf, sizeof(RandomForest));
+    int writefile = open("model.rfc", O_RDWR | O_CREAT | O_TRUNC, S_IRUSR);
+    SaveForest(rf, writefile);
 
     FreeCSVDataset(data);
     FreeRandomForest(rf);
