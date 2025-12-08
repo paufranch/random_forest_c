@@ -369,9 +369,69 @@ void SaveForest(RandomForest* rf, int fd)
     write(0, buff, strlen(buff));
 }
 
+void train_test_split(Dataset* data, Dataset* traindata, Dataset* testdata, double testsize, int shuffle)
+{
+    int ntest = (int)(data->n_samples * testsize);
+    int ntrain = data->n_samples - ntest;
+
+    int* indices = malloc(data->n_samples * sizeof(int));
+    for(int i = 0; i < data->n_samples; i++)
+    {
+        indices[i] = i;
+    }
+
+    if(shuffle)
+    {
+        int id = 0;
+        for(int i = data->n_samples - 1; i > 0; i--)
+        {
+            int j = rand() % (i + 1);
+            int temp = indices[i];
+            indices[i] = indices[j];
+            indices[j] = temp;
+        }
+    }
+
+    traindata->n_samples = ntrain;
+    traindata->n_features = data->n_features;
+    traindata->target_var = malloc(ntrain * sizeof(int));
+    traindata->vars = malloc(ntrain * sizeof(double*));
+
+    testdata->n_samples = ntest;
+    testdata->n_features = data->n_features;
+    testdata->target_var = malloc(ntest * sizeof(int));
+    testdata->vars = malloc(ntest * sizeof(double*));
+
+    for(int i = 0; i < ntrain; i++)
+    {
+        int rid = indices[i];
+        traindata->vars[i] = malloc(traindata->n_features * sizeof(double));
+        for(int j = 0; j < traindata->n_features; j++)
+        {
+            traindata->vars[i][j] = data->vars[rid][j];
+        }
+
+        traindata->target_var[i] = data->target_var[rid];
+    }
+
+    for(int i = 0; i < ntest; i++)
+    {
+        int rid = indices[ntrain + i];
+        testdata->vars[i] = malloc(testdata->n_features * sizeof(double));
+        for(int j = 0; j < testdata->n_features; j++)
+        {
+            testdata->vars[i][j] = data->vars[rid][j];
+        }
+
+        testdata->target_var[i] = data->target_var[rid];
+    }
+
+    free(indices);
+}
+
 int main()
 {
-    int fd = open("bankdataset.csv", O_RDONLY);
+    int fd = open("datasetclean.csv", O_RDONLY);
     if(fd == -1)
     {
         perror("Error opening dataset file.");
@@ -381,14 +441,16 @@ int main()
     Dataset* data = malloc(sizeof(Dataset));
     ReadCSV(data, fd);
 
-    int numTrees = 10;
+    int numTrees = 40;
     int numFeatures = data->n_features;
     RandomForest* rf = CreateRandomForest(numTrees, MAX_DEPTH, numFeatures);
 
-    // int train_size = (int)(data->n_samples * 0.8);
-    // int test_size = data->n_samples - train_size;
-    TrainForest(rf, data);
-    Metrics m = EvaluateModel(rf, data);
+    Dataset* traindata;
+    Dataset* testdata;
+    train_test_split(data, traindata, testdata, 0.2, 1); // Split dataset into train and test
+
+    TrainForest(rf, traindata);
+    Metrics m = EvaluateModel(rf, testdata);
     PrintMetrics(m);
 
     // Store tree into file
