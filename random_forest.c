@@ -313,6 +313,10 @@ void ReadCSV(Dataset* data, int fd)
         ret = read(fd, &c, sizeof(c));
         row++;
     }
+
+    char buff2[64];
+    sprintf(buff2, "Finished reading dataset.\n");
+    write(1, buff2, strlen(buff2));
 }
 
 void FreeCSVDataset(Dataset* data)
@@ -426,35 +430,51 @@ void train_test_split(Dataset* data, Dataset* traindata, Dataset* testdata, doub
         testdata->target_var[i] = data->target_var[rid];
     }
 
+    char buff[64];
+    sprintf(buff, "Finished train test split.\n");
+    write(1, buff, strlen(buff));
+
     free(indices);
 }
 
-int main()
+void Usage()
 {
-    int fd = open("datasetclean.csv", O_RDONLY);
+    char buff[128];
+    sprintf(buff, "Error: invalid parameters.\nUsage: ./random_forest <MODEL_NAME> <DATASET>.csv\n");
+    write(1, buff, strlen(buff));
+    exit(1);
+}
+
+int main(int argc, char* argv[])
+{
+    if(argc != 3) Usage();
+
+    int fd = open(argv[2], O_RDONLY);
     if(fd == -1)
     {
-        perror("Error opening dataset file.");
+        perror("Error opening dataset file. Maybe it isn't a valid csv file?");
         exit(1);
     }
 
     Dataset* data = malloc(sizeof(Dataset));
     ReadCSV(data, fd);
 
-    int numTrees = 40;
-    int numFeatures = data->n_features;
-    RandomForest* rf = CreateRandomForest(numTrees, MAX_DEPTH, numFeatures);
-
-    Dataset* traindata;
-    Dataset* testdata;
+    Dataset* traindata = malloc(sizeof(Dataset));
+    Dataset* testdata = malloc(sizeof(Dataset));
     train_test_split(data, traindata, testdata, 0.2, 1); // Split dataset into train and test
+
+    int numTrees = 20;
+    int numFeatures = traindata->n_features;
+    RandomForest* rf = CreateRandomForest(numTrees, MAX_DEPTH, numFeatures);
 
     TrainForest(rf, traindata);
     Metrics m = EvaluateModel(rf, testdata);
     PrintMetrics(m);
 
     // Store tree into file
-    int writefile = open("model.rfc", O_RDWR | O_CREAT | O_TRUNC, S_IRUSR);
+    char filename[256];
+    snprintf(filename, sizeof(filename), "%s.rfc", argv[1]);
+    int writefile = open(filename, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR);
     SaveForest(rf, writefile);
 
     FreeCSVDataset(data);
